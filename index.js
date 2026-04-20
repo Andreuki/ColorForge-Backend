@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 
@@ -14,6 +15,8 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const challengeRoutes = require('./routes/challengeRoutes');
 const paintRoutes = require('./routes/paintRoutes');
 const { startChallengeJob } = require('./jobs/challengeJob');
+
+const rateLimitersEnabled = process.env.NODE_ENV !== 'test' || process.env.ENABLE_RATE_LIMITERS === 'true';
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -30,7 +33,39 @@ const app = express();
 // ─── Global middlewares ───────────────────────────────────────────────────────
 app.use(express.json({ type: ['application/json', 'text/plain'] }));
 app.use(express.urlencoded({ extended: true }));
-app.use(cors({ origin: 'http://localhost:4200' }));
+// CORS_ORIGIN admite múltiples orígenes separados por comas:
+// CORS_ORIGIN=http://localhost:4200,https://colorforge.com,https://staging.colorforge.com
+const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:4200')
+  .split(',')
+  .map((o) => o.trim());
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Permitir peticiones sin origin (Postman, curl, etc.)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS: origin ${origin} not allowed`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'Pragma']
+}));
+
+// Si despliegas detrás de proxy/nginx/balanceador, habilita trust proxy antes del limiter:
+// app.set('trust proxy', 1);
+// Limiter global: 200 peticiones por IP cada 15 minutos
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Demasiadas peticiones, inténtalo más tarde' }
+});
+if (rateLimitersEnabled) {
+  app.use(globalLimiter);
+}
 
 app.use((req, res, next) => {
   const originalJson = res.json.bind(res);
@@ -58,7 +93,6 @@ app.use('/uploads/challenges', express.static(path.join(__dirname, 'uploads/chal
 app.use('/api/auth', authRoutes);
 app.use('/api/analysis', analysisRoutes);
 app.use('/api/analyses', analysisRoutes);
-app.use('/api/save-analysis', analysisRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/gallery', postRoutes);
 app.use('/api/users', userRoutes);

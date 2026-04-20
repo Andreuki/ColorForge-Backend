@@ -4,6 +4,7 @@ const path = require('path');
 const Analysis = require('../models/Analysis');
 const { rgbToHex, rgbToHue, classifyScheme, getTechniquesForScheme } = require('../utils/colorAnalysis');
 const { getPaintingAdvice } = require('../utils/aiPaintingAdvisor');
+const { verifyFileMagicBytes } = require('../middleware/upload');
 const {
   buildAiWarnings,
   sanitizeAdvancedTechniques,
@@ -28,6 +29,9 @@ const createAnalysis = async (req, res, next) => {
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'No se ha subido ninguna imagen' });
     }
+
+    const allowedImageMimes = ['image/jpeg', 'image/png', 'image/webp'];
+    await verifyFileMagicBytes(req.file.path, allowedImageMimes);
 
     // URL pública de la imagen servida como estático
     const imageUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
@@ -76,16 +80,18 @@ const createAnalysis = async (req, res, next) => {
     }
 
     const techniquesFromAi = [
+      // Fuente 1: techniques directas de la IA
       ...(Array.isArray(aiAdvice?.techniques) ? aiAdvice.techniques : []),
+      // Fuente 2: recommendedTechniques si vienen como campo separado
       ...(Array.isArray(aiAdvice?.recommendedTechniques) ? aiAdvice.recommendedTechniques : []),
+      // Fuente 3: técnicas extraídas del guía paso a paso
       ...(Array.isArray(aiAdvice?.stepByStepGuide)
         ? aiAdvice.stepByStepGuide.map((step) => step?.technique).filter(Boolean)
         : []),
-      ...(Array.isArray(aiAdvice?.techniques)
-        ? aiAdvice.techniques
-        : Array.isArray(aiAdvice?.advancedTechniques)
-          ? aiAdvice.advancedTechniques.map((t) => t?.name).filter(Boolean)
-          : [])
+      // Fuente 4: nombres de técnicas avanzadas SOLO si techniques no existe
+      ...(!Array.isArray(aiAdvice?.techniques) && Array.isArray(aiAdvice?.advancedTechniques)
+        ? aiAdvice.advancedTechniques.map((t) => t?.name).filter(Boolean)
+        : [])
     ];
 
     const recommendedTechniques = sanitizeTechniques(techniquesFromAi);
@@ -185,6 +191,9 @@ const createAnalysis = async (req, res, next) => {
       })
     });
   } catch (error) {
+    if (error.status === 400) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
     next(error);
   }
 };

@@ -96,4 +96,16 @@ const PostSchema = new Schema({
   }
 });
 
+// Optimiza listados de posts de un usuario ordenados por fecha.
+PostSchema.index({ userId: 1, createdAt: -1 });
+
+// Optimiza queries frecuentes por privacidad ordenadas por fecha.
+PostSchema.index({ privacy: 1, createdAt: -1 });
+
+// Optimiza búsquedas de posts por reto con filtro de privacidad.
+PostSchema.index({ challengeId: 1, privacy: 1 });
+
+// Optimiza ordenaciones generales por fecha de creación.
+PostSchema.index({ createdAt: -1 });
+
 module.exports = mongoose.model('Post', PostSchema);

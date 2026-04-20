@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
 const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
+const { comparePassword } = require('../utils/crypto');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -9,12 +9,9 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const generateToken = (user) =>
   jwt.sign({
     id: user._id,
-    _id: user._id,
-    email: user.email,
-    role: user.role,
-    avatar: user.avatar
+    _id: user._id
   }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || '7d'
+    expiresIn: process.env.JWT_EXPIRES_IN || '1d'
   });
 
 // ─── POST /api/auth/register ─────────────────────────────────────────────────
@@ -75,7 +72,11 @@ const login = async (req, res, next) => {
       return res.status(403).json({ error: 'This account has been deleted' });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    if (user.isBlocked) {
+      return res.status(403).json({ success: false, message: 'Tu cuenta ha sido bloqueada. Contacta con el administrador.' });
+    }
+
+    const isMatch = await comparePassword(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ success: false, message: 'Credenciales incorrectas' });
     }
@@ -177,6 +178,16 @@ const googleAuth = async (req, res) => {
       // Update avatar if user doesn't have one
       user.avatar = googlePicture;
       await user.save();
+    }
+
+    // Verificar que la cuenta no está eliminada
+    if (user.isDeleted) {
+      return res.status(403).json({ success: false, message: 'This account has been deleted' });
+    }
+
+    // Verificar que la cuenta no está bloqueada
+    if (user.isBlocked) {
+      return res.status(403).json({ success: false, message: 'Tu cuenta ha sido bloqueada. Contacta con el administrador.' });
     }
 
     // Generate JWT token

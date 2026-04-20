@@ -1,6 +1,7 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const fileType = require('file-type');
 
 // Asegurar que ./uploads existe antes de que multer intente escribir en ella
 const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -35,6 +36,25 @@ const upload = multer({
   fileFilter,
   limits: { fileSize: 5 * 1024 * 1024 } // 5 MB
 });
+
+/**
+ * Verifica el tipo MIME real de un fichero usando magic bytes.
+ * Lanza un error si el tipo no está permitido.
+ * @param {string} filePath ruta absoluta al fichero en disco
+ * @param {string[]} allowedMimes array de MIME types permitidos
+ */
+const verifyFileMagicBytes = async (filePath, allowedMimes) => {
+  const type = await fileType.fromFile(filePath);
+  if (!type || !allowedMimes.includes(type.mime)) {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+    const error = new Error('Tipo de archivo no permitido (verificación de contenido)');
+    error.status = 400;
+    throw error;
+  }
+  return type;
+};
 
 const avatarStorage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -118,3 +138,4 @@ module.exports.uploadAvatar = uploadAvatar;
 module.exports.uploadPostImages = uploadPostImages;
 module.exports.uploadPostImage = uploadPostImage;
 module.exports.uploadChallengeCover = uploadChallengeCover;
+module.exports.verifyFileMagicBytes = verifyFileMagicBytes;

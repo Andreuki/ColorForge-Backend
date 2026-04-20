@@ -34,4 +34,10 @@ const NotificationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Optimiza la consulta de notificaciones por destinatario ordenadas por fecha.
+NotificationSchema.index({ recipientId: 1, createdAt: -1 });
+
+// Optimiza el filtrado de notificaciones por destinatario y estado de lectura.
+NotificationSchema.index({ recipientId: 1, read: 1 });
+
 module.exports = mongoose.model('Notification', NotificationSchema);

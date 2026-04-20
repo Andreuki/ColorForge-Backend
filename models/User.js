@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
+const { hashPassword } = require('../utils/crypto');
 
 const UserSchema = new mongoose.Schema({
   username: {
@@ -91,10 +91,16 @@ const UserSchema = new mongoose.Schema({
   }
 });
 
+// Optimiza el ranking de usuarios ordenado por forgeScore.
+UserSchema.index({ forgeScore: -1 });
+
+// Optimiza filtros de usuarios activos/no eliminados en listados y paneles admin.
+UserSchema.index({ isDeleted: 1, active: 1 });
+
 // Hashear contraseña antes de guardar, solo si fue modificada
 UserSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
-  this.password = await bcrypt.hash(this.password, 10);
+  this.password = await hashPassword(this.password);
   next();
 });
 

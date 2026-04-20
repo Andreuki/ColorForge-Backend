@@ -76,4 +76,7 @@ const AnalysisSchema = new Schema({
   }
 });
 
+// Optimiza la lista de análisis de un usuario ordenada por fecha.
+AnalysisSchema.index({ userId: 1, createdAt: -1 });
+
 module.exports = mongoose.model('Analysis', AnalysisSchema);

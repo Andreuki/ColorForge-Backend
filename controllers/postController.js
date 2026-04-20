@@ -5,6 +5,7 @@ const Notification = require('../models/Notification');
 const fs = require('fs');
 const path = require('path');
 const { awardPoints } = require('../utils/forgeScore');
+const { verifyFileMagicBytes } = require('../middleware/upload');
 
 const parseArrayField = (value) => {
   if (value === undefined || value === null || value === '') return [];
@@ -63,6 +64,10 @@ const createPost = async (req, res) => {
     let imageUrls = [];
 
     if (Array.isArray(req.files) && req.files.length > 0) {
+      const allowedImageMimes = ['image/jpeg', 'image/png', 'image/webp'];
+      for (const file of req.files) {
+        await verifyFileMagicBytes(file.path, allowedImageMimes);
+      }
       imageUrls = req.files.map((f) => `/uploads/posts/${f.filename}`);
     } else if (analysisId) {
       const analysis = await Analysis.findById(analysisId).select('userId imageUrl');
@@ -105,6 +110,9 @@ const createPost = async (req, res) => {
 
     res.status(201).json({ success: true, data: post });
   } catch (err) {
+    if (err.status === 400) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
     res.status(500).json({ success: false, error: err.message });
   }
 };
@@ -133,27 +141,36 @@ const getAllPosts = async (req, res) => {
     if (userId) filter.userId = userId;
     if (faction) filter.faction = { $regex: faction, $options: 'i' };
     if (technique) filter.techniques = { $in: [technique] };
-    if (privacy) filter.privacy = privacy;
+    // No permitir filtrado externo de privacy: los permisos se controlan via $or arriba
+    // para garantizar que usuarios solo vean posts públicos, de followers o propios.
 
-    const sortOption = sort === 'top' ? { 'ratings.value': -1 } : { createdAt: -1 };
+    const skip = (pageNumber - 1) * limitNumber;
 
-    const posts = await Post.find(filter)
-      .sort({ createdAt: -1 })
-      .populate('userId', 'username avatar')
-      .populate('comments.userId', 'username avatar');
+    let posts;
 
-    const sortedPosts = posts
-      .sort((a, b) => {
-        if (sortOption.createdAt) {
-          return new Date(b.createdAt) - new Date(a.createdAt);
-        }
-        const avgA = a.ratings.length ? a.ratings.reduce((sum, r) => sum + r.value, 0) / a.ratings.length : 0;
-        const avgB = b.ratings.length ? b.ratings.reduce((sum, r) => sum + r.value, 0) / b.ratings.length : 0;
-        return avgB - avgA;
-      })
-      .slice((pageNumber - 1) * limitNumber, pageNumber * limitNumber);
+    if (sort === 'top') {
+      posts = await Post.aggregate([
+        { $match: filter },
+        { $addFields: { avgRating: { $avg: '$ratings.value' } } },
+        { $sort: { avgRating: -1 } },
+        { $skip: skip },
+        { $limit: limitNumber }
+      ]);
 
-    const normalized = sortedPosts.map((post) => {
+      posts = await Post.populate(posts, [
+        { path: 'userId', select: 'username avatar' },
+        { path: 'comments.userId', select: 'username avatar' }
+      ]);
+    } else {
+      posts = await Post.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNumber)
+        .populate('userId', 'username avatar')
+        .populate('comments.userId', 'username avatar');
+    }
+
+    const normalized = posts.map((post) => {
       const obj = normalizePost(post);
       const totalVotes = obj.ratings.length;
       const avgRating =

@@ -1,10 +1,12 @@
-const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const User = require('../models/User');
 const Post = require('../models/Post');
 const Notification = require('../models/Notification');
 const { awardPoints } = require('../utils/forgeScore');
+const { verifyFileMagicBytes } = require('../middleware/upload');
+const { hashPassword } = require('../utils/crypto');
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -73,11 +75,11 @@ const updatePassword = async (req, res) => {
   try {
     const { password } = req.body;
 
-    if (typeof password !== 'string' || password.length < 4) {
-      return res.status(400).json({ error: 'Password must be at least 4 characters' });
+    if (typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
 
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await hashPassword(password);
     await User.findByIdAndUpdate(req.user._id, { password: hash });
 
     res.status(204).send();
@@ -91,6 +93,9 @@ const uploadAvatar = async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'Avatar file is required' });
     }
+
+    const allowedImageMimes = ['image/jpeg', 'image/png', 'image/webp'];
+    await verifyFileMagicBytes(req.file.path, allowedImageMimes);
 
     const user = await User.findById(req.user._id);
     if (!user) {
@@ -113,6 +118,9 @@ const uploadAvatar = async (req, res) => {
 
     res.status(200).json({ avatarUrl });
   } catch (err) {
+    if (err.status === 400) {
+      return res.status(400).json({ error: err.message });
+    }
     res.status(500).json({ error: err.message });
   }
 };
@@ -150,18 +158,33 @@ const followUser = async (req, res) => {
       await User.findByIdAndUpdate(req.user._id, { $pull: { following: targetId } });
       await User.findByIdAndUpdate(targetId, { $pull: { followers: req.user._id } });
     } else {
-      await User.findByIdAndUpdate(req.user._id, { $addToSet: { following: targetId } });
-      await User.findByIdAndUpdate(targetId, { $addToSet: { followers: req.user._id } });
+      // Usar findByIdAndUpdate con { new: true } para obtener el estado actualizado
+      // y verificar si el $addToSet realmente añadió el elemento.
+      // Esto previene notificaciones duplicadas en caso de peticiones simultáneas.
+      const updatedUser = await User.findByIdAndUpdate(
+        req.user._id,
+        { $addToSet: { following: targetId } },
+        { new: true }
+      ).select('following');
 
-      await awardPoints(targetId, 'RECEIVE_FOLLOWER');
+      // Solo proceder si el follow fue realmente nuevo (el elemento está en el array)
+      const followedSuccessfully = updatedUser.following.some(
+        (id) => id.toString() === targetId
+      );
 
-      const follower = await User.findById(req.user._id).select('username');
-      await Notification.create({
-        recipientId: targetId,
-        senderId: req.user._id,
-        type: 'follow',
-        message: `${follower.username} ha empezado a seguirte`
-      });
+      if (followedSuccessfully) {
+        await User.findByIdAndUpdate(targetId, { $addToSet: { followers: req.user._id } });
+
+        await awardPoints(targetId, 'RECEIVE_FOLLOWER');
+
+        const follower = await User.findById(req.user._id).select('username');
+        await Notification.create({
+          recipientId: targetId,
+          senderId: req.user._id,
+          type: 'follow',
+          message: `${follower.username} ha empezado a seguirte`
+        });
+      }
     }
 
     res.status(200).json({ success: true, following: !isFollowing });
@@ -259,12 +282,18 @@ const deleteMyAccount = async (req, res) => {
   try {
     const userId = req.user._id;
 
+    // Generar un hash bcrypt de una cadena aleatoria para el password,
+    // nunca guardar plaintext. findByIdAndUpdate no ejecuta pre-save hooks,
+    // así que necesitamos hashear el password explícitamente aquí.
+    const randomPassword = crypto.randomBytes(32).toString('hex');
+    const hashedPassword = await hashPassword(randomPassword);
+
     await User.findByIdAndUpdate(userId, {
       $set: {
         username: `[Cuenta eliminada] ${userId.toString().slice(-6)}`,
         email: `deleted_${userId}@colorforge.deleted`,
         avatar: null,
-        password: 'DELETED',
+        password: hashedPassword,
         isDeleted: true,
         active: false,
         bio: '',
