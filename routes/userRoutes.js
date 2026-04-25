@@ -46,6 +46,7 @@ router.get('/profile/:id', protect, blockCheck, userController.getUserById);
 router.get('/:id', protect, blockCheck, userController.getUserById);
 
 router.post('/:id/follow', protect, blockCheck, userController.followUser);
+router.delete('/:id/follow', protect, blockCheck, userController.unfollowUser);
 router.get('/:id/posts', optionalAuth, userController.getUserPosts);
 router.get('/:id/followers', userController.getFollowers);
 router.get('/:id/following', userController.getFollowing);

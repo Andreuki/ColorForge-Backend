@@ -66,6 +66,18 @@ router.get('/:id/posts', async (req, res) => {
     const normalized = posts.map((p) => {
       const obj = p.toObject();
       if ((!obj.imageUrls || obj.imageUrls.length === 0) && obj.imageUrl) obj.imageUrls = [obj.imageUrl];
+      if (!obj.imageUrl && Array.isArray(obj.imageUrls) && obj.imageUrls.length > 0) {
+        obj.imageUrl = obj.imageUrls[0];
+      }
+      if (obj.userId) {
+        obj.author = {
+          _id: obj.userId._id,
+          username: obj.userId.username,
+          avatar: obj.userId.avatar
+        };
+      } else {
+        obj.author = null;
+      }
       return obj;
     });
 

@@ -81,26 +81,125 @@ const updateUser = async (req, res) => {
   }
 };
 
-const getStats = async (req, res) => {
+const getAdminStats = async (req, res) => {
   try {
-    const [totalUsers, totalAnalyses, totalPosts] = await Promise.all([
+    const now = new Date();
+    const last7Days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const [
+      totalUsers,
+      newUsersWeek,
+      newUsersMonth,
+      usersByTier,
+      totalPosts,
+      publicPosts,
+      newPostsWeek,
+      newPostsMonth,
+      postsWithChallenge,
+      totalChallenges,
+      activeChallenges,
+      completedChallenges,
+      topUsers,
+      topPosts
+    ] = await Promise.all([
       User.countDocuments(),
-      Analysis.countDocuments(),
-      Post.countDocuments()
+      User.countDocuments({ createdAt: { $gte: last7Days } }),
+      User.countDocuments({ createdAt: { $gte: last30Days } }),
+      User.aggregate([
+        { $group: { _id: '$forgeTier', count: { $sum: 1 } } },
+        { $sort: { count: -1 } }
+      ]),
+      Post.countDocuments(),
+      Post.countDocuments({ privacy: 'public' }),
+      Post.countDocuments({ createdAt: { $gte: last7Days } }),
+      Post.countDocuments({ createdAt: { $gte: last30Days } }),
+      Post.countDocuments({ challengeId: { $exists: true, $ne: null } }),
+      Challenge.countDocuments(),
+      Challenge.countDocuments({ isActive: true }),
+      Challenge.countDocuments({ isActive: false, winnerId: { $exists: true, $ne: null } }),
+      User.find()
+        .sort({ forgeScore: -1 })
+        .limit(5)
+        .select('_id username avatar forgeScore forgeTier'),
+      Post.aggregate([
+        { $match: { privacy: 'public' } },
+        {
+          $addFields: {
+            avgRating: { $ifNull: [{ $avg: '$ratings.value' }, 0] }
+          }
+        },
+        { $sort: { avgRating: -1, createdAt: -1 } },
+        { $limit: 5 },
+        {
+          $lookup: {
+            from: 'users',
+            localField: 'userId',
+            foreignField: '_id',
+            as: 'authorData'
+          }
+        },
+        {
+          $project: {
+            _id: 1,
+            imageUrl: {
+              $ifNull: [
+                '$imageUrl',
+                {
+                  $cond: [
+                    { $gt: [{ $size: { $ifNull: ['$imageUrls', []] } }, 0] },
+                    { $arrayElemAt: ['$imageUrls', 0] },
+                    null
+                  ]
+                }
+              ]
+            },
+            title: 1,
+            avgRating: 1,
+            authorUsername: { $arrayElemAt: ['$authorData.username', 0] }
+          }
+        }
+      ])
     ]);
 
-    const postsWithComments = await Post.aggregate([
-      { $project: { count: { $size: '$comments' } } },
-      { $group: { _id: null, total: { $sum: '$count' } } }
-    ]);
-
-    const totalComments = postsWithComments[0]?.total || 0;
-
-    res.status(200).json({ totalUsers, totalAnalyses, totalPosts, totalComments });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(200).json({
+      users: {
+        total: totalUsers,
+        newLast7Days: newUsersWeek,
+        newLast30Days: newUsersMonth,
+        byTier: usersByTier.map((t) => ({ tier: t._id, count: t.count }))
+      },
+      posts: {
+        total: totalPosts,
+        public: publicPosts,
+        newLast7Days: newPostsWeek,
+        newLast30Days: newPostsMonth,
+        withChallenge: postsWithChallenge
+      },
+      challenges: {
+        total: totalChallenges,
+        active: activeChallenges,
+        completed: completedChallenges,
+        totalParticipations: postsWithChallenge
+      },
+      topUsers: topUsers.map((u) => ({
+        _id: u._id,
+        username: u.username,
+        avatar: u.avatar,
+        forgeScore: u.forgeScore,
+        forgeTier: u.forgeTier
+      })),
+      topPosts
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: 'Error al obtener estadísticas',
+      error: error.message
+    });
   }
 };
+
+const getStats = getAdminStats;
 
 const blockUser = async (req, res) => {
   try {
@@ -297,6 +396,7 @@ const listAllChallenges = async (req, res) => {
 module.exports = {
   listUsers,
   updateUser,
+  getAdminStats,
   getStats,
   blockUser,
   listAllPosts,

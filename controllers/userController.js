@@ -193,6 +193,33 @@ const followUser = async (req, res) => {
   }
 };
 
+const unfollowUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const currentUserId = req.user._id;
+
+    if (id === currentUserId.toString()) {
+      return res.status(400).json({ message: 'No puedes dejar de seguirte a ti mismo' });
+    }
+
+    const userToUnfollow = await User.findById(id);
+    if (!userToUnfollow) {
+      return res.status(404).json({ message: 'Usuario no encontrado' });
+    }
+
+    await User.findByIdAndUpdate(currentUserId, {
+      $pull: { following: id }
+    });
+    await User.findByIdAndUpdate(id, {
+      $pull: { followers: currentUserId }
+    });
+
+    res.json({ message: 'Has dejado de seguir a este usuario' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error al dejar de seguir', error: error.message });
+  }
+};
+
 const getUserPosts = async (req, res) => {
   try {
     const filter = { userId: req.params.id };
@@ -329,6 +356,7 @@ module.exports = {
   uploadAvatar,
   getUserById,
   followUser,
+  unfollowUser,
   getUserPosts,
   getFollowers,
   getFollowing,
