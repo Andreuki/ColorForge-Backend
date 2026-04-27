@@ -125,6 +125,8 @@ const getMe = async (req, res) => {
         forgeScore: user.forgeScore,
         forgeTier: user.forgeTier,
         badges: user.badges,
+        followers: user.followers,      // array de ObjectIds
+        following: user.following,      // array de ObjectIds
         createdAt: user.createdAt
       }
     });

@@ -44,12 +44,20 @@ router.get('/public', async (req, res) => {
 
 router.get('/active', async (req, res) => {
   try {
+    const challenge = await Challenge.findOne({ isActive: true })
+      .sort({ createdAt: -1 });
+
+    if (!challenge) {
+      return res.status(200).json({ success: true, data: null });
+    }
+
+    // Si el reto activo ya expiró, desactivarlo ahora mismo
+    // (el cron lo haría a las 00:05, pero así es inmediato)
     const now = new Date();
-    const challenge = await Challenge.findOne({
-      isActive: true,
-      startDate: { $lte: now },
-      endDate: { $gte: now }
-    });
+    if (challenge.endDate < now) {
+      await Challenge.findByIdAndUpdate(challenge._id, { isActive: false });
+      return res.status(200).json({ success: true, data: null });
+    }
 
     res.status(200).json({ success: true, data: challenge });
   } catch (err) {
@@ -131,7 +139,7 @@ router.post('/', protect, requireAdmin, uploadChallengeCover, async (req, res) =
   }
 });
 
-router.patch('/:id', protect, requireAdmin, async (req, res) => {
+router.patch('/:id', protect, requireAdmin, uploadChallengeCover, async (req, res) => {
   try {
     const { title, description, startDate, endDate, isActive, badge } = req.body;
     const updates = {};
@@ -140,8 +148,16 @@ router.patch('/:id', protect, requireAdmin, async (req, res) => {
     if (description !== undefined) updates.description = description;
     if (startDate !== undefined) updates.startDate = new Date(startDate);
     if (endDate !== undefined) updates.endDate = new Date(endDate);
-    if (isActive !== undefined) updates.isActive = isActive;
+    if (isActive !== undefined) {
+      // Aceptar tanto boolean como string 'true'/'false' (viene de FormData)
+      updates.isActive = isActive === true || isActive === 'true';
+    }
     if (badge !== undefined) updates.badge = badge;
+
+    // Si se subió una nueva imagen de portada, actualizar imageUrl
+    if (req.file) {
+      updates.imageUrl = `/uploads/challenges/${req.file.filename}`;
+    }
 
     const updated = await Challenge.findByIdAndUpdate(req.params.id, updates, { new: true });
     if (!updated) {
@@ -149,6 +165,37 @@ router.patch('/:id', protect, requireAdmin, async (req, res) => {
     }
 
     res.status(200).json({ success: true, data: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.patch('/:id/link-posts', protect, requireAdmin, async (req, res) => {
+  try {
+    const { postIds } = req.body;
+
+    if (!Array.isArray(postIds) || postIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'postIds debe ser un array no vacío de IDs'
+      });
+    }
+
+    const challenge = await Challenge.findById(req.params.id);
+    if (!challenge) {
+      return res.status(404).json({ success: false, error: 'Reto no encontrado' });
+    }
+
+    const result = await Post.updateMany(
+      { _id: { $in: postIds } },
+      { $set: { challengeId: challenge._id } }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `${result.modifiedCount} publicación(es) vinculada(s) al reto`,
+      data: { modifiedCount: result.modifiedCount }
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
